@@ -1,0 +1,58 @@
+# Broad set of checks; the exclusions below are either noise for Qt code
+# (parent/child ownership, signal/slot idioms) or for a UI that is laid out
+# with literal pixel coordinates.
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  cppcoreguidelines-*,
+  misc-*,
+  modernize-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  -bugprone-easily-swappable-parameters,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-owning-memory,
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-avoid-c-arrays,
+  -cppcoreguidelines-non-private-member-variables-in-classes,
+  -misc-include-cleaner,
+  -misc-non-private-member-variables-in-classes,
+  -misc-no-recursion,
+  -modernize-avoid-c-arrays,
+  -modernize-use-trailing-return-type,
+  -modernize-use-nodiscard,
+  -readability-function-cognitive-complexity,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -readability-implicit-bool-conversion,
+  -readability-math-missing-parentheses,
+  -readability-named-parameter,
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
+  -bugprone-throwing-static-initialization,
+  -portability-avoid-pragma-once
+
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*/src/.*'
+FormatStyle: file
+# GCC-only flag that Qt adds to the compile commands.
+RemovedArgs: ['-mno-direct-extern-access']
+
+CheckOptions:
+  - { key: readability-identifier-naming.ClassCase,           value: CamelCase }
+  - { key: readability-identifier-naming.StructCase,          value: CamelCase }
+  - { key: readability-identifier-naming.EnumCase,            value: CamelCase }
+  - { key: readability-identifier-naming.NamespaceCase,       value: lower_case }
+  - { key: readability-identifier-naming.FunctionCase,        value: camelBack }
+  - { key: readability-identifier-naming.ParameterCase,       value: camelBack }
+  - { key: readability-identifier-naming.LocalVariableCase,   value: camelBack }
+  - { key: readability-identifier-naming.PrivateMemberCase,   value: camelBack }
+  - { key: readability-identifier-naming.PrivateMemberPrefix, value: m_ }
+  - { key: readability-identifier-naming.GlobalConstantCase,  value: CamelCase }
+  - { key: readability-identifier-naming.GlobalConstantPrefix, value: k }
+  - { key: readability-braces-around-statements.ShortStatementLines, value: 0 }
+  - { key: misc-const-correctness.AnalyzeValues,              value: false }

@@ -1,0 +1,45 @@
+# Qt-flavoured style: 4 spaces, function braces on their own line,
+# everything else attached.
+Language: Cpp
+BasedOnStyle: WebKit
+Standard: c++20
+ColumnLimit: 110
+IndentWidth: 4
+NamespaceIndentation: None
+PointerAlignment: Right
+FixNamespaceComments: true
+Cpp11BracedListStyle: true
+SpaceBeforeCpp11BracedList: false
+
+# Keep the code airy and uniform.
+InsertBraces: true
+SeparateDefinitionBlocks: Always
+EmptyLineBeforeAccessModifier: Always
+EmptyLineAfterAccessModifier: Never
+MaxEmptyLinesToKeep: 1
+KeepEmptyLinesAtTheStartOfBlocks: false
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Empty
+AllowShortLambdasOnASingleLine: Inline
+AlwaysBreakTemplateDeclarations: Yes
+BreakConstructorInitializers: BeforeComma
+PackConstructorInitializers: Never
+AlignAfterOpenBracket: Align
+AlignOperands: AlignAfterOperator
+BreakBeforeBinaryOperators: NonAssignment
+SpacesBeforeTrailingComments: 1
+
+# Own headers, then Qt, then system libraries, then the standard library.
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^"'
+    Priority: 1
+  - Regex: '^<Q[A-Za-z]+>$'
+    Priority: 2
+  - Regex: '^<.*\.h>$'
+    Priority: 3
+  - Regex: '.*'
+    Priority: 4
