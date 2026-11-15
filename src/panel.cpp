@@ -14,6 +14,7 @@
 #include <QMessageBox>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QStyleHints>
 #include <QTimer>
 #include <QUrl>
 
@@ -46,12 +47,13 @@ QString number(bool available, int n)
 QColor latencyColor(long us)
 {
     if (us < 500) {
-        return kGood;
+        return theme().good;
     }
 
-    return us < 1000 ? kWarn : kBad;
+    return us < 1000 ? theme().warn : theme().bad;
 }
 
+const char *const kDarkModeKey = "dark_mode";
 const char *const kApiKey = "audio_api";
 const char *const kRateKey = "sample_rate";
 const char *const kBufferKey = "process_buffer";
@@ -119,7 +121,12 @@ void LatencyTest::stop()
 
 // ------------------------------------------------------------ Panel
 
-Panel::Panel(bool demo)
+QVariant Panel::savedDarkMode()
+{
+    return panelSettings().value(kDarkModeKey);
+}
+
+Panel::Panel(bool demo, bool followSystem)
     : m_dev(demo)
     , m_canvas(new Canvas)
 {
@@ -137,12 +144,44 @@ Panel::Panel(bool demo)
     for (int i = 0; i < 3; ++i) {
         view->addAction(names[i], this, [this, i] { selectPage(i); });
         auto *tab = new SideTab(names[i], m_canvas);
-        tab->move(8, 54 + 33 * i);
+        tab->move(kTabX, kFrameY + kTabPitch * i);
 
         connect(tab, &QAbstractButton::clicked, this, [this, i] { selectPage(i); });
         tabGroup->addButton(tab);
         m_tabs << tab;
         m_pages << new QWidget(m_canvas);
+    }
+
+    view->addSeparator();
+    QAction *dark = view->addAction("Dark Mode");
+    dark->setCheckable(true);
+    dark->setChecked(darkMode());
+
+    auto *darkSwitch = new MoonButton(m_canvas);
+    darkSwitch->move(kWidth - 8 - 44 - darkSwitch->width(), 18); // in the banner, left of the badge
+    darkSwitch->setChecked(darkMode());
+
+    auto applyDark = [dark, darkSwitch](bool on) {
+        setDarkMode(on);
+        dark->setChecked(on);
+        darkSwitch->setChecked(on);
+    };
+
+    auto chooseDark = [applyDark](bool on) {
+        applyDark(on);
+        panelSettings().setValue(kDarkModeKey, on);
+    };
+
+    connect(dark, &QAction::triggered, this, chooseDark);
+    connect(darkSwitch, &QAbstractButton::clicked, this, chooseDark);
+
+    if (followSystem) {
+        connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this,
+                [applyDark](Qt::ColorScheme scheme) {
+                    if (!savedDarkMode().isValid()) {
+                        applyDark(scheme == Qt::ColorScheme::Dark);
+                    }
+                });
     }
 
     QMenu *help = menuBar()->addMenu("&Help");
@@ -228,6 +267,7 @@ void Panel::selectPage(int index)
     }
 
     m_tabs[index]->setChecked(true);
+    m_canvas->setActiveTab(QRect(m_tabs[index]->pos(), QSize(kTabWidth, kTabHeight)));
     m_pages[index]->setGeometry(kPageX, kPageY, kFrameRight - kFrameX - 2,
                                 h - kFrameY - kFrameBottomMargin - 2);
     m_canvas->setFixedSize(kWidth, h);

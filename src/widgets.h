@@ -18,17 +18,43 @@ inline constexpr int kFrameX = 113;
 inline constexpr int kFrameY = 55;
 inline constexpr int kFrameRight = 797;
 inline constexpr int kFrameBottomMargin = 8;
+inline constexpr int kTabX = 8;
+inline constexpr int kTabWidth = 101;
+inline constexpr int kTabHeight = 29;
+inline constexpr int kTabPitch = 33;
 
-// Background with the title banner and the white page frame.
+// Colours of every hand-painted widget; there is a light and a dark set.
+struct Theme {
+    QColor window, page, field, border, groupBorder, strip, text, disabled;
+    QColor accent, accentBorder, glyph;
+    QColor buttonTop, buttonBottom, buttonDownTop, buttonDownBottom, buttonOff, pressed, tabHover;
+    QColor bannerTop, bannerBottom, bannerEdge, bannerHatch, badge, badgeText;
+    QColor hatchFill, hatchLine, hatchEdge, menuBar;
+    QColor okFill, okEdge, errorFill, errorEdge, infoFill, infoEdge;
+    QColor good, warn, bad; // traffic-light text colours
+};
+
+const Theme &theme();
+bool darkMode();
+
+// Switches the colour set and restyles the whole application.
+void setDarkMode(bool dark);
+
+// Background with the title banner and the page frame. The selected side tab
+// is drawn here as part of the frame outline, so the two join without a seam.
 class Canvas : public QWidget {
 public:
     using QWidget::QWidget;
+    void setActiveTab(const QRect &tab);
 
 protected:
     void paintEvent(QPaintEvent *) override;
+
+private:
+    QRect m_activeTab;
 };
 
-// Page selector on the left; the checked one merges into the page frame.
+// Page selector on the left; the checked one only paints its label and arrow.
 class SideTab : public QAbstractButton {
 public:
     SideTab(const QString &text, QWidget *parent);
@@ -141,6 +167,15 @@ private:
     bool m_locked = true;
 };
 
+// Moon icon that toggles the dark mode; it is filled while dark mode is on.
+class MoonButton : public QAbstractButton {
+public:
+    explicit MoonButton(QWidget *parent);
+
+protected:
+    void paintEvent(QPaintEvent *) override;
+};
+
 // Coloured message bar at the bottom of each page.
 class Notice : public QWidget {
 public:
@@ -178,9 +213,5 @@ public:
 protected:
     void paintEvent(QPaintEvent *) override;
 };
-
-extern const QColor kGood;
-extern const QColor kWarn;
-extern const QColor kBad;
 
 } // namespace ui

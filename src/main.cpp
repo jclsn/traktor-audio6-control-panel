@@ -3,12 +3,16 @@
 
 #include <QApplication>
 #include <QStyleFactory>
+#include <QStyleHints>
 #include <QTimer>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 
 namespace {
+
+enum class Scheme : std::uint8_t { Auto, Light, Dark };
 
 void usage()
 {
@@ -16,6 +20,7 @@ void usage()
               "Traktor Audio 6 Control Panel for Linux.\n\n"
               "  (no option)       open the control panel\n"
               "  --demo            open the panel against a simulated interface\n"
+              "  --dark, --light   force the colour scheme for this run\n"
               "  --version         print the version\n"
               "  --help            show this help");
 }
@@ -25,6 +30,7 @@ void usage()
 int main(int argc, char **argv)
 {
     bool demo = false;
+    Scheme scheme = Scheme::Auto;
     const char *shotDir = nullptr;
 
     for (int i = 1; i < argc; ++i) {
@@ -41,6 +47,10 @@ int main(int argc, char **argv)
 
         if (!std::strcmp(a, "--demo")) {
             demo = true;
+        } else if (!std::strcmp(a, "--dark")) {
+            scheme = Scheme::Dark;
+        } else if (!std::strcmp(a, "--light")) {
+            scheme = Scheme::Light;
         } else if (!std::strcmp(a, "--screenshot") && i + 1 < argc) { // development aid
             shotDir = argv[++i];
         }
@@ -50,37 +60,29 @@ int main(int argc, char **argv)
     QApplication::setApplicationName("traktor-audio6-panel");
     QApplication::setDesktopFileName("traktor-audio6-panel");
 
-    // Fixed light look, independent of the desktop theme, like the original.
+    // Own look in both colour schemes, independent of the desktop's widget style.
     QApplication::setStyle(QStyleFactory::create("Fusion"));
-    QPalette pal;
-    const QColor text("#262626");
-    pal.setColor(QPalette::Window, QColor("#f3f3f3"));
-    pal.setColor(QPalette::WindowText, text);
-    pal.setColor(QPalette::Base, Qt::white);
-    pal.setColor(QPalette::AlternateBase, QColor("#f3f3f3"));
-    pal.setColor(QPalette::Text, text);
-    pal.setColor(QPalette::Button, QColor("#e8e8e8"));
-    pal.setColor(QPalette::ButtonText, text);
-    pal.setColor(QPalette::ToolTipBase, Qt::white);
-    pal.setColor(QPalette::ToolTipText, text);
-    pal.setColor(QPalette::Highlight, QColor("#7aabdc"));
-    pal.setColor(QPalette::HighlightedText, Qt::white);
-    pal.setColor(QPalette::Disabled, QPalette::WindowText, QColor("#9da3a8"));
-    pal.setColor(QPalette::Disabled, QPalette::Text, QColor("#9da3a8"));
-    QApplication::setPalette(pal);
 
     QFont font("Noto Sans");
     font.setStyleHint(QFont::SansSerif);
     font.setPixelSize(12);
     font.setWeight(QFont::Medium);
     QApplication::setFont(font);
-    app.setStyleSheet("QMenuBar { background: #d6d3ce; font-weight: normal; }"
-                      "QMenuBar::item { padding: 2px 7px; background: transparent; }"
-                      "QMenuBar::item:selected { background: #0a246a; color: white; }"
-                      "QMenu { font-weight: normal; }"
-                      "QComboBox QAbstractItemView { font-weight: bold; }");
 
-    Panel panel(demo);
+    // Colour scheme: command line, then the saved choice, then the desktop setting.
+    if (scheme == Scheme::Auto) {
+        const QVariant saved = Panel::savedDarkMode();
+        if (saved.isValid()) {
+            scheme = saved.toBool() ? Scheme::Dark : Scheme::Light;
+        }
+    }
+
+    const bool followSystem = scheme == Scheme::Auto;
+    const bool dark = followSystem ? QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark
+                                   : scheme == Scheme::Dark;
+    ui::setDarkMode(dark);
+
+    Panel panel(demo, followSystem);
     panel.show();
 
     if (shotDir) {

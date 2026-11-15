@@ -6,6 +6,7 @@
 #include <QMainWindow>
 #include <QProcess>
 #include <QSet>
+#include <QVariant>
 
 #include <atomic>
 #include <thread>
@@ -48,7 +49,12 @@ class Panel : public QMainWindow {
     Q_DISABLE_COPY_MOVE(Panel)
 
 public:
-    explicit Panel(bool demo);
+    // followSystem: track the desktop's colour scheme until the user picks one.
+    Panel(bool demo, bool followSystem);
+
+    // The colour scheme chosen in the View menu; invalid if none was chosen yet.
+    static QVariant savedDarkMode();
+
     ~Panel() override;
     void saveScreenshots(const QString &dir);
 
