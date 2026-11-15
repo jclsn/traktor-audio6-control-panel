@@ -70,3 +70,7 @@ Startup settings need. Re-plug the interface after installing.
   buffer size up if you hear crackling under load.
 - **PipeWire readings need its tools:** `pw-dump`, `pw-top`, `pw-cat`,
   `pw-metadata` and `wpctl`. Without them the affected fields show `-`.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
