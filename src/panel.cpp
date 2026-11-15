@@ -12,10 +12,12 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QRegularExpression>
+#include <QSettings>
 #include <QTimer>
 #include <QUrl>
 
 #include <algorithm>
+#include <cstdio>
 #include <ctime>
 #include <initializer_list>
 #include <utility>
@@ -24,9 +26,12 @@ using namespace ui;
 
 namespace {
 
-const int kPageHeights[] = {271, 397, 473}; // content height per page, from the original
+// Content height per page. The first one is taller than the original because
+// of the Audio API selection and the longer explanation.
+const int kPageHeights[] = {314, 397, 473};
 const int kPageX = kFrameX + 1, kPageY = kFrameY + 1;
 const int kRates[] = {44100, 48000, 88200, 96000};
+const int kBufferSizes[] = {64, 128, 256, 512, 1024, 2048};
 const char *const kManualUrl =
     "https://www.native-instruments.com/fileadmin/ni_media/downloads/manuals/traktor/"
     "traktor_audio_6_manual_english.pdf";
@@ -44,6 +49,16 @@ QColor latencyColor(long us)
     }
 
     return us < 1000 ? kWarn : kBad;
+}
+
+const char *const kApiKey = "audio_api";
+const char *const kRateKey = "sample_rate";
+const char *const kBufferKey = "process_buffer";
+
+QSettings panelSettings()
+{
+    // NOLINTNEXTLINE(modernize-return-braced-init-list): the constructor is explicit
+    return QSettings(QSettings::IniFormat, QSettings::UserScope, "traktor-audio6", "panel");
 }
 
 } // namespace
@@ -135,7 +150,8 @@ Panel::Panel(bool demo)
         QMessageBox::about(this, "About",
                            "<b>Traktor Audio 6 Control Panel for Linux</b><br>Version " APP_VERSION
                            "<br><br>Unofficial re-creation of the Native Instruments control panel.<br>"
-                           "Port settings: ALSA (snd-usb-audio) &middot; Audio settings: PipeWire");
+                           "Port settings: ALSA and USB vendor requests &middot; "
+                           "Performance test: ALSA, PipeWire, JACK");
     });
 
     buildAudioPage();
@@ -143,10 +159,15 @@ Panel::Panel(bool demo)
     buildDiagnosticsPage();
     selectPage(0);
 
+    connect(&m_profiler, &Profiler::progress, this, [this](const QString &text) {
+        m_testProgress = text;
+        poll();
+    });
+
+    connect(&m_profiler, &Profiler::finished, this, &Panel::testFinished);
+
     if (demo) {
         m_pwOk = m_journalOk = true;
-        m_pwRate = 44100;
-        m_pwQuantum = 256;
     } else {
         connect(&m_dump, &QProcess::finished, this, [this](int code, QProcess::ExitStatus st) {
             if (st == QProcess::NormalExit && code == 0) {
@@ -185,6 +206,8 @@ Panel::Panel(bool demo)
 
 Panel::~Panel()
 {
+    m_profiler.stop(); // its destructor waits for the run to wind down
+
     for (QProcess *p : {&m_dump, &m_top, &m_journal}) {
         p->disconnect(this);
         if (p->state() != QProcess::NotRunning) {
@@ -219,37 +242,55 @@ void Panel::buildAudioPage()
 {
     QWidget *page = m_pages[0];
 
+    // Settings to use in the audio application. Nothing here is applied to the
+    // system: they select what the System Performance Test tries, and the test
+    // puts its suggestion back into them.
     auto *proc = new Group(page);
-    proc->setGeometry(18, 18, 314, 102);
-    proc->addStrip(10, "Audio Processing");
+    proc->setGeometry(18, 18, 314, 129);
+    proc->addStrip(10, "Performance Test Settings");
+    m_api = new Combo;
+
+    for (const AudioApi api : {AudioApi::Alsa, AudioApi::PipeWire, AudioApi::Jack}) {
+        m_api->addItem(apiName(api), static_cast<int>(api));
+    }
+
     m_rate = new Combo;
 
-    for (int r : kRates) {
+    for (const int r : kRates) {
         m_rate->addItem(QString("%1 Hz").arg(r), r);
     }
 
     m_buffer = new Combo;
-    proc->addRow(43, m_rate, "Sample Rate");
-    proc->addRow(70, m_buffer, "Process Buffer");
 
-    connect(m_rate, &QComboBox::activated, this, [this](int i) {
-        m_pwRate = m_rate->itemData(i).toInt();
-        setPipewireSetting("clock.force-rate", m_pwRate);
-    });
+    for (const int b : kBufferSizes) {
+        m_buffer->addItem(QString("%1 samples").arg(b), b);
+    }
 
-    connect(m_buffer, &QComboBox::activated, this, [this](int i) {
-        m_pwQuantum = m_buffer->itemData(i).toInt();
-        setPipewireSetting("clock.force-quantum", m_pwQuantum);
-    });
+    proc->addRow(43, m_api, "Audio API");
+    proc->addRow(70, m_rate, "Sample Rate");
+    proc->addRow(97, m_buffer, "Process Buffer");
+
+    const QSettings saved = panelSettings();
+    m_api->setCurrentIndex(qMax(0, m_api->findData(saved.value(kApiKey, 0))));
+    m_rate->setCurrentIndex(qMax(0, m_rate->findData(saved.value(kRateKey, 44100))));
+    m_buffer->setCurrentIndex(qMax(0, m_buffer->findData(saved.value(kBufferKey, 256))));
+
+    for (const Combo *combo : {m_api, m_rate, m_buffer}) {
+        connect(combo, &QComboBox::activated, this, [this] {
+            saveAudioChoice();
+            updateAudio();
+        });
+    }
 
     auto *mon = new Group(page);
-    mon->setGeometry(350, 18, 314, 102);
+    mon->setGeometry(350, 18, 314, 129);
     mon->addStrip(10, "Device Monitor");
     mon->addRow(43, m_state = new ValueBox, "Processing State");
     mon->addRow(70, m_latency = new ValueBox, "Output Latency");
+    mon->addRow(97, m_streamRate = new ValueBox, "Stream Sample Rate");
 
     auto *notice = new Notice(page);
-    notice->move(18, 138);
+    notice->setGeometry(18, 165, notice->width(), 66); // room for three lines
     m_notices << notice;
 }
 
@@ -363,6 +404,7 @@ void Panel::buildDiagnosticsPage()
         updateDiagnostics();
     });
 
+    // As in the original, Start and Reset only drive the latency monitor.
     m_latStart = button(perf, "Start", 123);
 
     connect(m_latStart, &QAbstractButton::clicked, this, [this] {
@@ -371,7 +413,21 @@ void Panel::buildDiagnosticsPage()
     });
 
     auto *legend = new Legend(perf);
-    legend->setGeometry(127, 96, 177, 45);
+    legend->setGeometry(127, 96, 70, 45);
+
+    // Additions to the original: test the buffer sizes of the selected audio
+    // API, or of every API in turn with a comparison.
+    m_testBuffers = new Button("Test Buffers", perf);
+    m_testBuffers->move(204, 96);
+
+    connect(m_testBuffers, &QAbstractButton::clicked, this,
+            [this] { startTest({static_cast<AudioApi>(m_api->currentData().toInt())}); });
+
+    m_testApis = new Button("Test APIs", perf);
+    m_testApis->move(204, 123);
+
+    connect(m_testApis, &QAbstractButton::clicked, this,
+            [this] { startTest({AudioApi::Alsa, AudioApi::PipeWire, AudioApi::Jack}); });
 
     Group *info = group(350, 165, 155, "Information");
     info->addRow(43, m_driverBox = new ValueBox, "Driver Version");
@@ -394,9 +450,21 @@ void Panel::poll()
     m_dev.refresh();
     const bool connected = m_dev.connected();
 
-    for (Notice *n : {m_notices[0], m_notices[2]}) {
-        n->set(connected ? Notice::Kind::Ok : Notice::Kind::Error,
-               connected ? "Interface connected." : "Interface not connected.");
+    if (!connected && m_profiler.running()) {
+        m_profiler.stop();
+    }
+
+    if (!connected) {
+        m_notices[0]->set(Notice::Kind::Error, "Interface not connected.");
+        m_notices[2]->set(Notice::Kind::Error, "Interface not connected.");
+    } else {
+        m_notices[0]->set(Notice::Kind::Info,
+                          "Nothing on this page is applied to the interface or the system. On Linux every "
+                          "audio application chooses its own audio API, sample rate and buffer size. These "
+                          "fields only select what Test Buffers and Test APIs on the Diagnostics page "
+                          "measure, and show their suggestion to enter in your application.");
+        m_notices[2]->set(Notice::Kind::Ok,
+                          m_profiler.running() ? m_testProgress : QString("Interface connected."));
     }
 
     updateAudio();
@@ -407,42 +475,15 @@ void Panel::poll()
 void Panel::updateAudio()
 {
     const bool connected = m_dev.connected();
-    const bool editable = connected && m_pwOk;
-    m_rate->setEnabled(editable);
-    m_buffer->setEnabled(editable);
+    const bool editable = connected && !m_profiler.running();
 
-    if (m_pwOk && !m_rate->view()->isVisible()) {
-        m_rate->setCurrentIndex(m_rate->findData(m_pwRate));
-    }
-
-    if (m_pwOk && !m_buffer->view()->isVisible()) {
-        QList<int> sizes;
-        for (int s = 32; s <= 4096; s *= 2) {
-            if ((m_pwMinQuantum == 0 || s >= m_pwMinQuantum)
-                && (m_pwMaxQuantum == 0 || s <= m_pwMaxQuantum)) {
-                sizes << s;
-            }
-        }
-
-        if (m_pwQuantum > 0 && !sizes.contains(m_pwQuantum)) {
-            sizes << m_pwQuantum;
-            std::ranges::sort(sizes);
-        }
-
-        if (sizes != m_bufferSizes) {
-            m_bufferSizes = sizes;
-            m_buffer->clear();
-
-            for (int s : sizes) {
-                m_buffer->addItem(QString("%1 samples").arg(s), s);
-            }
-        }
-
-        m_buffer->setCurrentIndex(m_buffer->findData(m_pwQuantum));
+    for (Combo *combo : {m_api, m_rate, m_buffer}) {
+        combo->setEnabled(editable);
     }
 
     m_state->setEnabled(connected);
     m_latency->setEnabled(connected);
+    m_streamRate->setEnabled(connected);
     QString state = "-";
 
     if (connected) {
@@ -451,16 +492,15 @@ void Panel::updateAudio()
 
     m_state->setText(state);
 
-    double ms = -1;
+    // Measured on the running stream, otherwise what the chosen buffer implies.
+    double ms = 1000.0 * m_buffer->currentData().toInt() / m_rate->currentData().toInt();
 
     if (m_dev.streaming() && m_dev.delayFrames() >= 0 && m_dev.hwRate() > 0) {
-        ms = 1000.0 * static_cast<double>(m_dev.delayFrames())
-           / m_dev.hwRate(); // measured on the running stream
-    } else if (m_pwOk && m_pwRate > 0 && m_pwQuantum > 0) {
-        ms = 1000.0 * m_pwQuantum / m_pwRate; // what the buffer setting implies
+        ms = 1000.0 * static_cast<double>(m_dev.delayFrames()) / m_dev.hwRate();
     }
 
-    m_latency->setText(connected && ms >= 0 ? QString("%1 ms").arg(ms, 0, 'f', 1) : "-");
+    m_latency->setText(connected ? QString("%1 ms").arg(ms, 0, 'f', 1) : "-");
+    m_streamRate->setText(connected && m_dev.hwRate() > 0 ? QString("%1 Hz").arg(m_dev.hwRate()) : "-");
 }
 
 void Panel::updateChannel()
@@ -556,7 +596,12 @@ void Panel::updateDiagnostics()
         m_latMax->setText("-");
     }
 
+    // A buffer test runs the latency monitor itself.
     m_latStart->setText(m_latTest.running() ? "Stop" : "Start");
+    m_latStart->setEnabled(!m_profiler.running());
+    m_testBuffers->setText(m_profiler.running() ? "Stop" : "Test Buffers");
+    m_testBuffers->setEnabled(connected);
+    m_testApis->setEnabled(connected && !m_profiler.running());
 }
 
 // ------------------------------------------------------------ Channel Setup
@@ -608,16 +653,6 @@ void Panel::portEdited()
 
 // ------------------------------------------------------------ PipeWire / kernel log
 
-void Panel::setPipewireSetting(const char *key, int value)
-{
-    if (m_dev.demo()) {
-        return;
-    }
-
-    QProcess::startDetached("pw-metadata", {"-n", "settings", "0", key, QString::number(value)});
-    QTimer::singleShot(300, this, &Panel::startDump);
-}
-
 void Panel::startDump()
 {
     if (!m_dev.demo() && m_dump.state() == QProcess::NotRunning) {
@@ -635,7 +670,6 @@ void Panel::parseDump(const QByteArray &json)
     QSet<int> ours;
     QSet<QString> names;
     QList<QPair<int, int>> links;
-    QHash<QString, int> settings;
 
     for (const auto &v : doc.array()) {
         const QJsonObject o = v.toObject();
@@ -655,11 +689,6 @@ void Panel::parseDump(const QByteArray &json)
             }
         } else if (type.endsWith(":Link")) {
             links.append({info["output-node-id"].toInt(), info["input-node-id"].toInt()});
-        } else if (type.endsWith(":Metadata")
-                   && o["props"].toObject()["metadata.name"].toString() == "settings") {
-            for (const auto &m : o["metadata"].toArray()) {
-                settings[m.toObject()["key"].toString()] = m.toObject()["value"].toVariant().toInt();
-            }
         }
     }
 
@@ -673,13 +702,103 @@ void Panel::parseDump(const QByteArray &json)
 
     m_clients = static_cast<int>(peers.size());
     m_nodeNames = std::move(names);
-    m_pwOk = settings.contains("clock.rate");
-    const int forcedRate = settings.value("clock.force-rate");
-    const int forcedQuantum = settings.value("clock.force-quantum");
-    m_pwRate = forcedRate > 0 ? forcedRate : settings.value("clock.rate");
-    m_pwQuantum = forcedQuantum > 0 ? forcedQuantum : settings.value("clock.quantum");
-    m_pwMinQuantum = settings.value("clock.min-quantum");
-    m_pwMaxQuantum = settings.value("clock.max-quantum");
+    m_pwOk = true;
+}
+
+// ------------------------------------------------------------ System Performance Test
+
+void Panel::saveAudioChoice() const
+{
+    if (m_dev.demo()) {
+        return;
+    }
+
+    QSettings settings = panelSettings();
+    settings.setValue(kApiKey, m_api->currentData());
+    settings.setValue(kRateKey, m_rate->currentData());
+    settings.setValue(kBufferKey, m_buffer->currentData());
+}
+
+void Panel::startTest(const QList<AudioApi> &apis)
+{
+    if (m_profiler.running()) {
+        m_profiler.stop();
+        return;
+    }
+
+    // Leave out what this system does not have, and say what is missing. A
+    // setup with only ALSA and PulseAudio, for instance, has neither PipeWire
+    // nor JACK.
+    QList<AudioApi> usable;
+    QStringList missing;
+
+    for (const AudioApi api : apis) {
+        const QString reason = m_dev.demo() ? QString() : apiUnavailable(api);
+
+        if (reason.isEmpty()) {
+            usable << api;
+        } else {
+            missing << QString("%1: %2").arg(apiName(api), reason);
+        }
+    }
+
+    if (!missing.isEmpty()) {
+        const QString rest = usable.isEmpty() ? QString("There is nothing left to test.")
+                                              : QString("The test continues without them.");
+        QMessageBox::information(this, "Audio API not available",
+                                 QString("These audio APIs cannot be tested on this system:\n\n%1\n\n%2")
+                                     .arg(missing.join("\n\n"), rest));
+    }
+
+    if (usable.isEmpty()) {
+        return;
+    }
+
+    m_testProgress = "Starting the test ...";
+    m_latTest.reset();
+    m_latTest.start();
+    m_profiler.start(usable, m_dev.card(), m_rate->currentData().toInt(), m_dev.demo());
+    poll();
+}
+
+void Panel::testFinished(const QList<ProfileResult> &results)
+{
+    m_latTest.stop();
+
+    QString text;
+
+    for (const ProfileResult &result : results) {
+        text += result.summary() + '\n';
+    }
+
+    if (results.size() > 1) {
+        text += comparison(results) + '\n';
+    }
+
+    text += QString::fromUtf8("Worst scheduling latency during the test: %1 µs.\n").arg(m_latTest.maxUs());
+
+    // Take over the suggestion, of the best API if several were compared.
+    if (const ProfileResult *best = bestOf(results)) {
+        const ProfileStep *step = best->suggested();
+        const int buffer = m_buffer->findData(step->actualFrames > 0 ? step->actualFrames : step->frames);
+        const int api = m_api->findData(static_cast<int>(best->api));
+
+        if (buffer >= 0 && api >= 0) {
+            m_buffer->setCurrentIndex(buffer);
+            m_api->setCurrentIndex(api);
+            saveAudioChoice();
+            text += "\nThe Audio Settings page has been set to the suggested values.\n";
+        }
+    }
+
+    std::fputs(qPrintable(text), stdout);
+    std::fflush(stdout);
+    poll();
+
+    QMessageBox box(QMessageBox::NoIcon, "Test Results",
+                    "<pre style='font-family: monospace'>" + text.toHtmlEscaped() + "</pre>", QMessageBox::Ok,
+                    this);
+    box.exec();
 }
 
 void Panel::startTop()

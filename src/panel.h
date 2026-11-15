@@ -1,5 +1,6 @@
 #pragma once
 #include "backend.h"
+#include "profiler.h"
 #include "widgets.h"
 
 #include <QMainWindow>
@@ -74,7 +75,12 @@ private:
     void startTop();
     void parseTop(const QByteArray &text);
     void readJournal();
-    void setPipewireSetting(const char *key, int value);
+
+    // System Performance Test
+    void startTest(const QList<AudioApi> &apis); // stops a running test instead
+
+    void testFinished(const QList<ProfileResult> &results);
+    void saveAudioChoice() const;
 
     Device m_dev;
     ui::Canvas *m_canvas = nullptr;
@@ -84,11 +90,12 @@ private:
     int m_page = 0;
 
     // Audio Settings
+    ui::Combo *m_api = nullptr;
     ui::Combo *m_rate = nullptr;
     ui::Combo *m_buffer = nullptr;
     ui::ValueBox *m_state = nullptr;
     ui::ValueBox *m_latency = nullptr;
-    QList<int> m_bufferSizes;
+    ui::ValueBox *m_streamRate = nullptr;
 
     // Channel Setup
     ui::SubTab *m_tabCurrent = nullptr;
@@ -110,7 +117,11 @@ private:
     ui::ValueBox *m_driverBox = nullptr;
     ui::ValueBox *m_firmwareBox = nullptr;
     ui::Button *m_latStart = nullptr;
+    ui::Button *m_testBuffers = nullptr;
+    ui::Button *m_testApis = nullptr;
     LatencyTest m_latTest;
+    Profiler m_profiler;
+    QString m_testProgress;
 
     // PipeWire state
     QProcess m_dump;
@@ -118,10 +129,6 @@ private:
     QProcess m_journal;
     bool m_pwOk = false;
     bool m_journalOk = false;
-    int m_pwRate = 0;
-    int m_pwQuantum = 0;
-    int m_pwMinQuantum = 0;
-    int m_pwMaxQuantum = 0;
     int m_clients = 0;
     int m_xruns = 0;
     int m_xrunBase = 0;

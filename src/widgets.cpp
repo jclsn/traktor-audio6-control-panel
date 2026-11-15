@@ -289,7 +289,7 @@ void Combo::paintEvent(QPaintEvent *)
     p.drawRoundedRect(crisp(rect()), 3, 3);
     p.setPen(on ? kText : kDisabled);
     p.setFont(sized(this, 12, true));
-    p.drawText(rect().adjusted(2, 0, -17, -1), Qt::AlignCenter, on ? currentText() : QStringLiteral("-"));
+    p.drawText(rect().adjusted(2, 0, -17, -1), Qt::AlignCenter, currentText());
     QPolygonF arrow;
     const qreal ax = width() - 11.5;
     const qreal ay = 6.5;
