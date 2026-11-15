@@ -15,9 +15,6 @@ void usage()
     std::puts("Usage: traktor-audio6-panel [OPTION]\n"
               "Traktor Audio 6 Control Panel for Linux.\n\n"
               "  (no option)       open the control panel\n"
-              "  --daemon          no window; apply the Startup settings whenever the\n"
-              "                    interface is plugged in\n"
-              "  --apply-startup   apply the Startup settings once and exit\n"
               "  --demo            open the panel against a simulated interface\n"
               "  --version         print the version\n"
               "  --help            show this help");
@@ -32,22 +29,6 @@ int main(int argc, char **argv)
 
     for (int i = 1; i < argc; ++i) {
         const char *a = argv[i];
-        if (!std::strcmp(a, "--daemon")) {
-            return runDaemon();
-        }
-
-        if (!std::strcmp(a, "--apply-startup")) {
-            Device dev;
-            dev.refresh();
-
-            if (!dev.connected()) {
-                std::fputs("Traktor Audio 6 is not connected.\n", stderr);
-                return 1;
-            }
-
-            return dev.setPorts(loadStartup()) ? 0 : 1;
-        }
-
         if (!std::strcmp(a, "--version")) {
             std::puts(APP_VERSION);
             return 0;

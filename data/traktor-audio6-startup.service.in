@@ -1,9 +1,0 @@
-[Unit]
-Description=Traktor Audio 6: apply Startup port settings when the interface is plugged in
-
-[Service]
-ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/traktor-audio6-panel --daemon
-Restart=on-failure
-
-[Install]
-WantedBy=default.target

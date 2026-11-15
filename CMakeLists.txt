@@ -27,6 +27,5 @@ target_link_libraries(traktor-audio6-panel PRIVATE Qt6::Widgets ALSA::ALSA Threa
 install(TARGETS traktor-audio6-panel RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES data/traktor-audio6-panel.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-configure_file(data/traktor-audio6-startup.service.in traktor-audio6-startup.service @ONLY)
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/traktor-audio6-startup.service
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/systemd/user)
+install(FILES data/70-traktor-audio6.rules
+        DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/udev/rules.d)

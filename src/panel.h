@@ -82,8 +82,6 @@ private:
     QList<QWidget *> m_pages;
     QList<ui::Notice *> m_notices; // one per page
     int m_page = 0;
-    bool m_firstPoll = true;
-    bool m_wasConnected = false;
 
     // Audio Settings
     ui::Combo *m_rate = nullptr;
@@ -100,6 +98,7 @@ private:
     ui::Radio *m_line[2] = {};
     bool m_startupMode = false;
     bool m_unlocked = false;
+    bool m_startupLoaded = false; // widgets show what is stored in the interface
 
     // Diagnostics
     ui::ValueBox *m_usbIoBox = nullptr;

@@ -4,14 +4,13 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
-#include <QSettings>
-#include <QTextStream>
 
 #include <alsa/asoundlib.h>
+#include <fcntl.h>
+#include <linux/usbdevice_fs.h>
+#include <sys/ioctl.h>
 #include <sys/utsname.h>
-
-#include <chrono>
-#include <thread>
+#include <unistd.h>
 
 namespace {
 
@@ -62,38 +61,94 @@ bool ctlAccess(int card, const char *name, bool write, bool &value)
     return rc >= 0;
 }
 
-QSettings startupStore()
+// Vendor requests of the interface for the port settings.
+// wIndex is (setting << 8) | port; the kernel driver only ever uses setting 0.
+constexpr quint8 kReqDirectThru = 0x01;
+constexpr quint8 kReqInputMode = 0x02; // 0 = Line, 1 = Phono
+constexpr quint8 kReqWriteFlash = 0x10;
+constexpr quint16 kSettingStartup = 0x0100;
+constexpr quint16 kPortA = 0x03;
+constexpr quint16 kPortB = 0x05;
+
+// Control transfers on endpoint 0 through usbfs. They need no interface claim,
+// so they work while snd-usb-audio is bound to the device.
+class UsbControl {
+public:
+    explicit UsbControl(const QString &node)
+        : m_fd(open(node.toLocal8Bit().constData(), O_RDWR | O_CLOEXEC))
+    {
+    }
+
+    ~UsbControl()
+    {
+        if (m_fd >= 0) {
+            close(m_fd);
+        }
+    }
+
+    UsbControl(const UsbControl &) = delete;
+    UsbControl &operator=(const UsbControl &) = delete;
+    UsbControl(UsbControl &&) = delete;
+    UsbControl &operator=(UsbControl &&) = delete;
+
+    bool read(quint8 request, quint16 index, bool &value) const
+    {
+        quint8 byte = 0;
+        if (transfer(0xC0, request, 0, index, &byte, 1) != 1) {
+            return false;
+        }
+
+        value = (byte & 1U) != 0;
+
+        return true;
+    }
+
+    bool write(quint8 request, quint16 index, quint16 value) const
+    {
+        return transfer(0x40, request, value, index, nullptr, 0) >= 0;
+    }
+
+private:
+    int transfer(quint8 type, quint8 request, quint16 value, quint16 index, void *data, quint16 length) const
+    {
+        if (m_fd < 0) {
+            return -1;
+        }
+
+        usbdevfs_ctrltransfer t{};
+        t.bRequestType = type;
+        t.bRequest = request;
+        t.wValue = value;
+        t.wIndex = index;
+        t.wLength = length;
+        t.timeout = 1000; // ms
+        t.data = data;
+
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): ioctl is the usbfs interface
+        return ioctl(m_fd, USBDEVFS_CONTROL, &t);
+    }
+
+    int m_fd;
+};
+
+// Device node of the interface, e.g. /dev/bus/usb/001/051; empty if it is gone.
+QString usbNode(int card)
 {
-    // NOLINTNEXTLINE(modernize-return-braced-init-list): the constructor is explicit
-    return QSettings(QSettings::IniFormat, QSettings::UserScope, "traktor-audio6", "startup");
+    QDir dev(QFileInfo(QString("/sys/class/sound/card%1/device").arg(card)).canonicalFilePath());
+    dev.cdUp();
+    bool busOk = false;
+    bool devOk = false;
+    const int bus = readFile(dev.filePath("busnum")).trimmed().toInt(&busOk);
+    const int num = readFile(dev.filePath("devnum")).trimmed().toInt(&devOk);
+
+    if (!busOk || !devOk) {
+        return {};
+    }
+
+    return QString("/dev/bus/usb/%1/%2").arg(bus, 3, 10, QChar('0')).arg(num, 3, 10, QChar('0'));
 }
 
 } // namespace
-
-PortSettings loadStartup()
-{
-    const QSettings s = startupStore();
-    const PortSettings d;
-
-    return {
-        .directA = s.value("A/direct_thru", d.directA).toBool(),
-        .directB = s.value("B/direct_thru", d.directB).toBool(),
-        .phonoA = s.value("A/phono", d.phonoA).toBool(),
-        .phonoB = s.value("B/phono", d.phonoB).toBool(),
-    };
-}
-
-bool saveStartup(const PortSettings &p)
-{
-    QSettings s = startupStore();
-    s.setValue("A/direct_thru", p.directA);
-    s.setValue("A/phono", p.phonoA);
-    s.setValue("B/direct_thru", p.directB);
-    s.setValue("B/phono", p.phonoB);
-    s.sync();
-
-    return s.status() == QSettings::NoError;
-}
 
 QString driverVersion()
 {
@@ -186,6 +241,47 @@ bool Device::setPorts(const PortSettings &s)
     return ok;
 }
 
+bool Device::readStartup(PortSettings &s) const
+{
+    if (m_demo) {
+        s = m_demoStartup;
+        return true;
+    }
+
+    if (!m_connected) {
+        return false;
+    }
+
+    const UsbControl usb(usbNode(m_card));
+
+    return usb.read(kReqDirectThru, kSettingStartup | kPortA, s.directA)
+        && usb.read(kReqDirectThru, kSettingStartup | kPortB, s.directB)
+        && usb.read(kReqInputMode, kSettingStartup | kPortA, s.phonoA)
+        && usb.read(kReqInputMode, kSettingStartup | kPortB, s.phonoB);
+}
+
+bool Device::writeStartup(const PortSettings &s)
+{
+    if (m_demo) {
+        m_demoStartup = s;
+        return true;
+    }
+
+    if (!m_connected) {
+        return false;
+    }
+
+    // The values are only staged in the interface until the flash request.
+    const UsbControl usb(usbNode(m_card));
+    PortSettings stored;
+
+    return usb.write(kReqDirectThru, kSettingStartup | kPortA, s.directA)
+        && usb.write(kReqDirectThru, kSettingStartup | kPortB, s.directB)
+        && usb.write(kReqInputMode, kSettingStartup | kPortA, s.phonoA)
+        && usb.write(kReqInputMode, kSettingStartup | kPortB, s.phonoB) && usb.write(kReqWriteFlash, 0, 0)
+        && readStartup(stored) && stored == s;
+}
+
 void Device::readUsbInfo()
 {
     // /sys/class/sound/cardN/device -> .../<bus-port>/<bus-port>:1.0
@@ -223,33 +319,4 @@ void Device::readStreamState()
     if (playing && m.hasMatch()) {
         m_delayFrames = qMax(0LL, m.captured(1).toLongLong());
     }
-}
-
-int runDaemon()
-{
-    using namespace std::chrono_literals;
-    QTextStream out(stdout);
-    Device dev;
-    bool present = false;
-
-    for (;;) {
-        bool now = findCard() >= 0;
-        if (now && !present) {
-            std::this_thread::sleep_for(1500ms); // let udev/alsactl restore mixer state first
-            dev.refresh();
-
-            if (dev.connected()) {
-                const bool ok = dev.setPorts(loadStartup());
-                out << "Traktor Audio 6 connected, startup settings "
-                    << (ok ? "applied" : "could NOT be applied") << Qt::endl;
-            } else {
-                now = false; // retry on the next round
-            }
-        }
-
-        present = now;
-        std::this_thread::sleep_for(1s);
-    }
-
-    return 0;
 }

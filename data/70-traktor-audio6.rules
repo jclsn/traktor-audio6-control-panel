@@ -1,0 +1,4 @@
+# Lets the logged-in user send control requests to the Traktor Audio 6, which
+# the control panel needs for the Startup settings. Most systems already grant
+# this to USB sound devices; the rule makes it explicit.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="17cc", ATTR{idProduct}=="1011", TAG+="uaccess"

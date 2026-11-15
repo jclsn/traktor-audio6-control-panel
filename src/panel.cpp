@@ -298,19 +298,21 @@ void Panel::buildChannelPage()
     connect(notice->lock, &QAbstractButton::clicked, this, [this] {
         m_unlocked = !m_unlocked;
         if (!m_unlocked) {
-            showPorts(loadStartup()); // locked again without saving: discard edits
+            m_startupLoaded = false; // locked again without saving: discard edits
         }
 
         updateChannel();
     });
 
     connect(notice->save, &QAbstractButton::clicked, this, [this] {
-        if (!saveStartup(shownPorts())) {
-            QMessageBox::warning(this, windowTitle(), "The startup settings could not be saved.");
+        if (!m_dev.writeStartup(shownPorts())) {
+            QMessageBox::warning(this, windowTitle(),
+                                 "The startup settings could not be saved to the interface.");
             return;
         }
 
         m_unlocked = false;
+        m_startupLoaded = false; // show what the interface really stored
         updateChannel();
     });
 }
@@ -392,19 +394,6 @@ void Panel::poll()
     m_dev.refresh();
     const bool connected = m_dev.connected();
 
-    // Emulate the device's startup memory while the panel is open (see README).
-    if (!m_firstPoll && connected && !m_wasConnected && !m_dev.demo()) {
-        QTimer::singleShot(1500, this, [this] {
-            m_dev.refresh();
-            if (m_dev.connected()) {
-                m_dev.setPorts(loadStartup());
-            }
-        });
-    }
-
-    m_firstPoll = false;
-    m_wasConnected = connected;
-
     for (Notice *n : {m_notices[0], m_notices[2]}) {
         n->set(connected ? Notice::Kind::Ok : Notice::Kind::Error,
                connected ? "Interface connected." : "Interface not connected.");
@@ -481,12 +470,33 @@ void Panel::updateChannel()
     bool editable = false;
 
     if (m_startupMode) {
-        editable = m_unlocked;
-        notice->set(Notice::Kind::Info,
-                    m_unlocked ? "Click Save to store these settings as the startup configuration."
-                               : "Click the lock to make changes.");
-        notice->showLock(true, !m_unlocked);
-        notice->save->setVisible(m_unlocked);
+        if (!connected) {
+            m_unlocked = false;
+            m_startupLoaded = false;
+        } else if (!m_startupLoaded) {
+            PortSettings stored;
+            m_startupLoaded = m_dev.readStartup(stored);
+
+            if (m_startupLoaded) {
+                showPorts(stored);
+            }
+        }
+
+        editable = m_unlocked && m_startupLoaded;
+
+        if (!connected) {
+            notice->set(Notice::Kind::Error, "Interface not connected.");
+        } else if (!m_startupLoaded) {
+            notice->set(Notice::Kind::Error,
+                        "The startup settings could not be read. Check the access rights of the USB device.");
+        } else {
+            notice->set(Notice::Kind::Info,
+                        m_unlocked ? "Click Save to store these settings as the startup configuration."
+                                   : "Click the lock to make changes.");
+        }
+
+        notice->showLock(m_startupLoaded, !m_unlocked);
+        notice->save->setVisible(editable);
     } else {
         editable = connected;
         notice->showLock(false);
@@ -502,7 +512,7 @@ void Panel::updateChannel()
             notice->set(Notice::Kind::Error, "Interface not connected.");
         }
 
-        // Follow changes made elsewhere (alsamixer, the startup daemon ...).
+        // Follow changes made elsewhere (alsamixer ...).
         bool busy = false;
 
         for (int ch = 0; ch < 2; ++ch) {
@@ -556,7 +566,12 @@ void Panel::setChannelMode(bool startup)
     m_startupMode = startup;
     m_unlocked = false;
     (startup ? m_tabStartup : m_tabCurrent)->setChecked(true);
-    showPorts(startup ? loadStartup() : m_dev.ports());
+    m_startupLoaded = false;
+
+    if (!startup) {
+        showPorts(m_dev.ports());
+    }
+
     updateChannel();
 }
 

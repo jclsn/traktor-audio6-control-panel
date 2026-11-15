@@ -1,4 +1,4 @@
-// Hardware access for the Traktor Audio 6 (Qt Core + libasound only, no GUI).
+// Hardware access for the Traktor Audio 6 (Qt Core, libasound and usbfs; no GUI).
 #pragma once
 #include <QString>
 
@@ -7,9 +7,6 @@ struct PortSettings {
     bool directA = true, directB = true, phonoA = true, phonoB = true;
     bool operator==(const PortSettings &) const = default;
 };
-
-PortSettings loadStartup();
-bool saveStartup(const PortSettings &p);
 
 // The driver (snd-usb-audio) is part of the kernel, so this is the kernel version.
 QString driverVersion();
@@ -23,6 +20,11 @@ public:
 
     void refresh(); // re-read everything; call periodically
     bool setPorts(const PortSettings &s); // write the "Current" settings
+
+    // The "Startup" settings live in the interface's flash memory and are what
+    // it powers up with, also without a computer.
+    bool readStartup(PortSettings &s) const;
+    bool writeStartup(const PortSettings &s);
 
     bool demo() const { return m_demo; }
 
@@ -50,12 +52,10 @@ private:
     bool m_connected = false;
     int m_card = -1;
     PortSettings m_ports;
+    PortSettings m_demoStartup;
     bool m_streaming = false;
     int m_hwRate = 0;
     long m_delayFrames = -1;
     QString m_firmware = "-";
     QString m_usbPort;
 };
-
-// Headless mode: apply the Startup settings every time the interface appears.
-int runDaemon();
