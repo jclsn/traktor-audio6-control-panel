@@ -1,54 +1,83 @@
-# Traktor Audio 6 Control Panel für Linux
+# Traktor Audio 6 Control Panel for Linux
 
-Nachbau des Native-Instruments-Control-Panels für das Traktor Audio 6
-(USB `17cc:1011`) in C++ / Qt 6. Aufbau, Maße und Beschriftungen folgen den
-Screenshots des Windows-Panels aus dem offiziellen Handbuch (Kapitel 6.1).
+Re-creation of the Native Instruments control panel for the Traktor Audio 6
+(USB `17cc:1011`) in C++ / Qt 6. Layout, dimensions and labels follow the
+screenshots of the Windows panel in the official manual (chapter 6.1).
 
-## Bauen und starten
+## Build and run
 
-Benötigt: Qt 6 (Widgets), alsa-lib, CMake, ein C++20-Compiler.
+Requires Qt 6 (Widgets), alsa-lib, CMake and a C++20 compiler.
 
 ```sh
 cmake -S . -B build -G Ninja
 cmake --build build
-./build/traktor-audio6-panel          # Panel öffnen
-./build/traktor-audio6-panel --demo   # simuliertes Interface, fasst keine Hardware an
+./build/traktor-audio6-panel          # open the panel
+./build/traktor-audio6-panel --demo   # simulated interface, does not touch hardware
 ```
 
-Installieren (Programm, Starter-Eintrag, systemd-User-Dienst):
+Install (program, launcher entry, systemd user service):
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_INSTALL_PREFIX=$HOME/.local
 cmake --build build && cmake --install build
 systemctl --user daemon-reload
-systemctl --user enable --now traktor-audio6-startup.service   # für die Startup-Einstellungen
+systemctl --user enable --now traktor-audio6-startup.service   # for the Startup settings
 ```
 
-## Was die Seiten unter Linux tun
+## What the pages do on Linux
 
-| Original | Umsetzung |
+| Original | Implementation |
 |---|---|
-| **Channel Setup → Current** (Direct Thru, Phono/Line je Port A/B) | Direkt die vier ALSA-Schalter des Kernel-Treibers (`Direct Thru Channel A/B`, `Phono Input Channel A/B`). Änderungen von außen (z. B. `alsamixer`) erscheinen sofort. |
-| **Channel Setup → Startup** (Schloss, Save) | Gespeichert in `~/.config/traktor-audio6/startup.ini` und bei jedem Einstecken auf das Gerät geschrieben – vom Dienst `traktor-audio6-startup` (`--daemon`) bzw. vom offenen Panel. |
+| **Channel Setup → Current** (Direct Thru, Phono/Line per port A/B) | The four ALSA switches of the kernel driver (`Direct Thru Channel A/B`, `Phono Input Channel A/B`). Changes made elsewhere (e.g. `alsamixer`) show up immediately. |
+| **Channel Setup → Startup** (lock, Save) | Stored in `~/.config/traktor-audio6/startup.ini` and written to the device every time it is plugged in, by the `traktor-audio6-startup` service (`--daemon`) or by the open panel. |
 | **Sample Rate / Process Buffer** | PipeWire: `clock.force-rate` / `clock.force-quantum`. |
-| **Processing State** | `Idle` / `Streaming` aus dem ALSA-Streamstatus. |
-| **Output Latency** | Bei laufender Wiedergabe der gemessene ALSA-Delay, sonst Puffergröße ÷ Samplerate. |
-| **Buffer Underruns** | Xrun-Zähler der PipeWire-Knoten des Interfaces (`pw-top`). |
-| **Number of Clients** | Anzahl der PipeWire-Knoten, die mit dem Interface verbunden sind. |
-| **USB I/O Errors / USB Data Errors** | Kernel-Meldungen zum USB-Port des Interfaces seit Programmstart (`journalctl -k`). |
-| **System Performance Test** | Statt DPC-Latenz: Verspätung eines 1-ms-Timers (Scheduling-Latenz) in µs. |
-| **Driver / Firmware Version** | Kernel-Version (der Treiber `snd-usb-audio` ist Teil des Kernels) / `bcdDevice` des USB-Geräts. |
+| **Processing State** | `Idle` / `Streaming` from the ALSA stream status. |
+| **Output Latency** | The measured ALSA delay while playback is running, otherwise buffer size ÷ sample rate. |
+| **Buffer Underruns** | Xrun counters of the interface's PipeWire nodes (`pw-top`). |
+| **Number of Clients** | Number of PipeWire nodes linked to the interface. |
+| **USB I/O Errors / USB Data Errors** | Kernel messages for the interface's USB port since program start (`journalctl -k`). |
+| **System Performance Test** | Instead of DPC latency: how late a 1 ms timer wakes up (scheduling latency), in µs. |
+| **Driver / Firmware Version** | Kernel version (the `snd-usb-audio` driver is part of the kernel) / `bcdDevice` of the USB device. |
 
-## Abweichungen vom Original
+## Differences from the original
 
-- **Startup-Einstellungen liegen nicht im Gerät.** Der Linux-Treiber kennt den
-  Befehl für den geräteinternen Startup-Speicher nicht. Sie gelten daher nur an
-  diesem Rechner; im Stand-alone-Betrieb (nur Netzteil) nutzt das Interface
-  weiter, was zuletzt unter Windows/macOS im Gerät gespeichert wurde.
-- **Sample Rate und Process Buffer gelten für ganz PipeWire**, nicht nur für
-  das Interface, und werden bei einem PipeWire-Neustart zurückgesetzt.
-- Ohne PipeWire bzw. ohne Leserecht auf das Kernel-Log zeigen die betroffenen
-  Felder `-`. Der Zustand `Panic` existiert unter Linux nicht.
-- Das Schloss auf dem Startup-Tab fragt kein Administrator-Passwort ab.
-- Der Hinweistext auf dem Current-Tab verweist auf den „Startup tab“ (im
-  Original steht dort fälschlich „USB and DC tabs“).
+- **Startup settings are not stored in the device yet.** The kernel driver
+  only exposes the Current settings, so the panel keeps the Startup settings
+  in a local file. They therefore apply on this computer only; in stand-alone
+  operation (power supply only) the interface keeps using whatever was last
+  saved to it on Windows/macOS. The requests needed to store them in the
+  device are documented below but not implemented.
+- **Sample Rate and Process Buffer apply to all of PipeWire**, not just the
+  interface, and are reset when PipeWire restarts.
+- Without PipeWire, or without read access to the kernel log, the affected
+  fields show `-`. The `Panic` state does not exist on Linux.
+- The lock on the Startup tab does not ask for an administrator password.
+- The hint on the Current tab refers to the "Startup tab" (the original
+  mistakenly says "USB and DC tabs").
+
+## USB protocol of the port settings
+
+Taken from the disassembly of the original macOS Control Panel 3.1.0
+(`NI::DRV::AudioClient::Device` and `NI::NHL2::XMOSDevice`). All settings are
+vendor control requests to the device on endpoint 0:
+
+| Action | bmRequestType | bRequest | wValue | wIndex | Data |
+|---|---|---|---|---|---|
+| Set Direct Thru | `0x40` | `0x01` | 0 = off, 1 = on | `(setting << 8) \| port` | none |
+| Set input mode | `0x40` | `0x02` | 0 = Line, 1 = Phono | `(setting << 8) \| port` | none |
+| Read either one | `0xC0` | `0x01` / `0x02` | 0 | as above | 1 byte |
+| Save to flash | `0x40` | `0x10` | 0 | 0 | none |
+
+- `port` is `0x03` for A and `0x05` for B.
+- `setting` is `0` for Current and `1` for Startup, so the Startup values
+  live at wIndex `0x0103` and `0x0105`.
+
+The Current requests are the ones the kernel driver already sends. On the
+Startup tab the original panel sends each change right away with `setting` 1,
+and Save then issues the single flash request.
+
+Verification status: the read requests were tried against a real device for
+both settings and returned plausible values (Startup held the factory default,
+Phono with Direct Thru on, which is also why input mode 1 is taken to mean
+Phono). The Startup writes and the flash request are read from the code only
+and have not been sent to a device.
