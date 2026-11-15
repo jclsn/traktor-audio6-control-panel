@@ -2,6 +2,7 @@
 #include "panel.h"
 
 #include <QApplication>
+#include <QIcon>
 #include <QStyleFactory>
 #include <QStyleHints>
 #include <QTimer>
@@ -62,6 +63,8 @@ int main(int argc, char **argv)
 
     // Own look in both colour schemes, independent of the desktop's widget style.
     QApplication::setStyle(QStyleFactory::create("Fusion"));
+    QApplication::setWindowIcon(
+        QIcon::fromTheme("traktor-audio6-panel", QIcon(":/traktor-audio6-panel.svg")));
 
     QFont font("Noto Sans");
     font.setStyleHint(QFont::SansSerif);

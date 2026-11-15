@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/">
+    <file>traktor-audio6-panel.svg</file>
+  </qresource>
+</RCC>

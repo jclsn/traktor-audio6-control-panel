@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Application icon, drawn for this project. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f2f3f4"/>
+      <stop offset="1" stop-color="#b4b8bc"/>
+    </linearGradient>
+    <linearGradient id="disc" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4b5766"/>
+      <stop offset="0.5" stop-color="#1b222c"/>
+      <stop offset="1" stop-color="#0a0e14"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="34" fill="url(#tile)" stroke="#8d9297" stroke-width="2"/>
+  <circle cx="128" cy="128" r="98" fill="url(#disc)"/>
+  <circle cx="128" cy="128" r="78" fill="none" stroke="#ffffff" stroke-width="9"/>
+  <!-- speaker -->
+  <path d="M84 110h20l30-25v86l-30-25H84z" fill="#ffffff"/>
+  <!-- sound waves -->
+  <path d="M150 108a28 28 0 0 1 0 40" fill="none" stroke="#ffffff" stroke-width="9" stroke-linecap="round"/>
+  <path d="M165 92a50 50 0 0 1 0 72" fill="none" stroke="#7aabdc" stroke-width="9" stroke-linecap="round"/>
+</svg>
