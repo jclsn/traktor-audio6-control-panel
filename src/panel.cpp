@@ -356,7 +356,7 @@ void Panel::buildChannelPage()
         g->setGeometry(18 + 166 * ch, 60, 148, 185);
         g->setHeading(ch == 0 ? "A" : "B");
         g->addStrip(29, "Input Routing", Qt::AlignLeft);
-        g->addStrip(93, "Input Sens", Qt::AlignLeft);
+        g->addStrip(93, "Input Sensitivity", Qt::AlignLeft);
         m_direct[ch] = new Check("Direct Thru", g);
         m_direct[ch]->move(19, 62);
         m_phono[ch] = new Radio("Phono", g);
@@ -580,8 +580,10 @@ void Panel::updateChannel()
                         "The startup settings could not be read. Check the access rights of the USB device.");
         } else {
             notice->set(Notice::Kind::Info,
-                        m_unlocked ? "Click Save to store these settings as the startup configuration."
-                                   : "Click the lock to make changes.");
+                        m_unlocked ? "Choose the settings the interface should power on with, then click "
+                                     "Save to store them in the interface."
+                                   : "Startup settings are stored in the interface. It powers on with them, "
+                                     "also without a computer. Click the lock to make changes.");
         }
 
         notice->showLock(m_startupLoaded, !m_unlocked);
@@ -594,9 +596,8 @@ void Panel::updateChannel()
         if (connected) {
             notice->set(
                 Notice::Kind::Info,
-                "Here you can change the Input Sensitivity and Direct Thru settings. Note that changes "
-                "made on this tab will be lost after restarting. Please use the Startup tab to set up "
-                "the default startup configuration.");
+                "Current settings take effect immediately on this computer. They are set through ALSA, "
+                "which saves them at shutdown and restores them when the interface is plugged in.");
         } else {
             notice->set(Notice::Kind::Error, "Interface not connected.");
         }
