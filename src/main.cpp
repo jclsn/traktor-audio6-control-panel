@@ -89,6 +89,8 @@ int main(int argc, char **argv)
             panel.saveScreenshots(dir);
             QApplication::quit();
         });
+    } else {
+        QTimer::singleShot(300, &panel, &Panel::checkRealtimePriority); // once the window is up
     }
 
     return QApplication::exec();

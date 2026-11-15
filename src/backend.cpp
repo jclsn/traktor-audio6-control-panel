@@ -7,10 +7,16 @@
 
 #include <alsa/asoundlib.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <linux/usbdevice_fs.h>
+#include <pwd.h>
 #include <sys/ioctl.h>
+#include <sys/resource.h>
 #include <sys/utsname.h>
 #include <unistd.h>
+
+#include <algorithm>
+#include <vector>
 
 namespace {
 
@@ -160,6 +166,143 @@ QString driverVersion()
     const auto m = QRegularExpression(R"(^\d+(\.\d+)*)").match(QString::fromLatin1(u.release));
 
     return m.hasMatch() ? m.captured(0) : QString::fromLatin1(u.release);
+}
+
+namespace {
+
+// One "rtprio" line of the PAM limits configuration.
+struct RtprioGrant {
+    QString domain; // user name, "@group" or "*"
+    int priority = 0;
+    QString file;
+};
+
+QList<RtprioGrant> rtprioGrants(const QString &securityDir)
+{
+    QStringList files = {securityDir + "/limits.conf"};
+    const QDir dropIns(securityDir + "/limits.d");
+
+    for (const QString &name : dropIns.entryList({"*.conf"}, QDir::Files, QDir::Name)) {
+        files << dropIns.filePath(name);
+    }
+
+    QList<RtprioGrant> grants;
+
+    for (const QString &file : std::as_const(files)) {
+        for (const QString &line : readFile(file).split('\n')) {
+            // <domain> <type> <item> <value>, with "#" starting a comment
+            const QStringList field = line.section('#', 0, 0).simplified().split(' ', Qt::SkipEmptyParts);
+
+            if (field.size() == 4 && field[2] == "rtprio" && field[3].toInt() > 0) {
+                grants.append({.domain = field[0], .priority = field[3].toInt(), .file = file});
+            }
+        }
+    }
+
+    return grants;
+}
+
+// Groups of the user according to the group database. Unlike the groups of
+// the running session, this includes memberships that await the next login.
+QStringList groupsOf(const passwd &user)
+{
+    int count = 64;
+    std::vector<gid_t> ids(static_cast<std::size_t>(count));
+
+    if (getgrouplist(user.pw_name, user.pw_gid, ids.data(), &count) < 0) {
+        ids.resize(static_cast<std::size_t>(count));
+        getgrouplist(user.pw_name, user.pw_gid, ids.data(), &count);
+    }
+
+    ids.resize(static_cast<std::size_t>(qMax(0, count)));
+    QStringList names;
+
+    for (const gid_t id : ids) {
+        if (const group *entry = getgrgid(id)) { // NOLINT(concurrency-mt-unsafe)
+            names << QString::fromLocal8Bit(entry->gr_name);
+        }
+    }
+
+    return names;
+}
+
+bool groupExists(const QString &name)
+{
+    return getgrnam(name.toLocal8Bit().constData()) != nullptr; // NOLINT(concurrency-mt-unsafe)
+}
+
+} // namespace
+
+int rtprioLimit()
+{
+    rlimit limit{};
+
+    if (getrlimit(RLIMIT_RTPRIO, &limit) != 0) {
+        return 0;
+    }
+
+    return static_cast<int>(qMin<rlim_t>(limit.rlim_cur, 99));
+}
+
+RtprioSetup rtprioSetup(const QString &securityDir)
+{
+    const passwd *user = getpwuid(getuid()); // NOLINT(concurrency-mt-unsafe)
+    const QString name = user ? QString::fromLocal8Bit(user->pw_name) : QString::number(getuid());
+    const QStringList groups = user ? groupsOf(*user) : QStringList();
+    const QList<RtprioGrant> grants = rtprioGrants(securityDir);
+    RtprioSetup setup;
+
+    // Already covered, by name, by a wildcard or through a group?
+    for (const RtprioGrant &grant : grants) {
+        if (grant.domain == name || grant.domain == "*"
+            || (grant.domain.startsWith('@') && groups.contains(grant.domain.mid(1)))) {
+            setup.action = RtprioSetup::Action::LogInAgain;
+            return setup;
+        }
+    }
+
+    // A group that already has the limit: join it instead of adding an entry.
+    // "realtime" is the group of Arch's realtime-privileges package, "audio"
+    // the one other distributions use.
+    const RtprioGrant *group = nullptr;
+
+    for (const char *preferred : {"@realtime", "@audio", "@"}) {
+        for (const RtprioGrant &grant : grants) {
+            if (!group && grant.domain.startsWith(preferred) && groupExists(grant.domain.mid(1))) {
+                group = &grant;
+            }
+        }
+    }
+
+    if (group) {
+        const QString groupName = group->domain.mid(1);
+        setup.action = RtprioSetup::Action::JoinGroup;
+        setup.question = QString("Add the user '%1' to the group '%2'?").arg(name, groupName);
+        setup.detail = QString("%1 already grants realtime priority %2 to that group, so no further "
+                               "entry is needed.")
+                           .arg(group->file)
+                           .arg(group->priority);
+        setup.command = {"usermod", "-a", "-G", groupName, name};
+        setup.done = QString("The user '%1' is now a member of the group '%2'.").arg(name, groupName);
+
+        return setup;
+    }
+
+    // 95 leaves the priorities above it to kernel threads such as IRQ handlers.
+    const QString file = securityDir + "/limits.d/95-audio-realtime.conf";
+    const QString contents = QString("# Realtime scheduling for audio applications\n"
+                                     "%1 - rtprio 95\n"
+                                     "%1 - memlock unlimited\n")
+                                 .arg(name);
+    setup.question = QString("Allow realtime priority 95 and locked memory for the user '%1'?").arg(name);
+    setup.detail = QString("This writes %1.").arg(file);
+    setup.command = {
+        "sh", "-c",     R"sh(mkdir -p "$(dirname "$2")" && printf '%s' "$1" > "$2" && chmod 644 "$2")sh",
+        "sh", contents, file,
+    };
+    setup.done = QString("%1 has been written.").arg(file);
+
+    return setup;
 }
 
 int findCard()

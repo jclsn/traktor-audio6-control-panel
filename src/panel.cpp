@@ -4,6 +4,7 @@
 #include <QButtonGroup>
 #include <QDesktopServices>
 #include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -438,6 +439,14 @@ void Panel::buildDiagnosticsPage()
     connect(show, &QAbstractButton::clicked, this, [] { QDesktopServices::openUrl(QUrl(kManualUrl)); });
     m_driverBox->setText(driverVersion());
 
+    // Addition to the original: the realtime priority limit of the session.
+    // The button takes the place of the value while there is nothing to show.
+    info->addRow(123, m_realtimeBox = new ValueBox, "Realtime Priority");
+    m_realtimeSetup = new Button("Set Up", info);
+    m_realtimeSetup->move(m_realtimeBox->pos());
+
+    connect(m_realtimeSetup, &QAbstractButton::clicked, this, &Panel::offerRealtimeSetup);
+
     auto *notice = new Notice(page);
     notice->move(18, 339);
     m_notices << notice;
@@ -583,6 +592,13 @@ void Panel::updateDiagnostics()
     m_underrunBox->setText(number(connected && m_pwOk, qMax(0, m_xruns - m_xrunBase)));
     m_clientsBox->setText(number(connected && m_pwOk, m_clients));
     m_firmwareBox->setText(connected ? m_dev.firmware() : "-");
+
+    // New limits only reach the session at the next login.
+    const int realtime = rtprioLimit();
+    const bool pending = realtime == 0 && rtprioSetup().action == RtprioSetup::Action::LogInAgain;
+    m_realtimeSetup->setVisible(realtime == 0 && !pending);
+    m_realtimeBox->setVisible(!m_realtimeSetup->isVisible());
+    m_realtimeBox->setText(pending ? QString("Log in again") : QString::number(realtime));
 
     auto show = [](ValueBox *box, long us) {
         box->setText(QString::fromUtf8("%1 µs").arg(us), latencyColor(us));
@@ -761,6 +777,62 @@ void Panel::startTest(const QList<AudioApi> &apis)
     poll();
 }
 
+void Panel::checkRealtimePriority()
+{
+    // Nothing to offer if the user is already covered and only a login is missing.
+    if (!m_dev.demo() && rtprioLimit() == 0 && rtprioSetup().action != RtprioSetup::Action::LogInAgain) {
+        offerRealtimeSetup();
+    }
+}
+
+void Panel::offerRealtimeSetup()
+{
+    const RtprioSetup setup = rtprioSetup();
+    QMessageBox ask(QMessageBox::Question, "Realtime priority",
+                    QString("Your session may not use realtime scheduling (the rtprio limit is 0). Audio "
+                            "applications then cannot give their audio thread priority over other "
+                            "programs, which causes dropouts at small buffer sizes.\n\n"
+                            "%1\n\n"
+                            "%2 It needs administrator rights. Afterwards you need to log out of your "
+                            "desktop session and log in again, or restart the computer.")
+                        .arg(setup.question, setup.detail),
+                    QMessageBox::NoButton, this);
+    const QAbstractButton *accept = ask.addButton("Set Up", QMessageBox::AcceptRole);
+    ask.addButton("Not Now", QMessageBox::RejectRole);
+    ask.exec();
+
+    if (ask.clickedButton() != accept) {
+        return;
+    }
+
+    // pkexec shows the desktop's password prompt.
+    auto *install = new QProcess(this);
+
+    connect(install, &QProcess::finished, this, [this, install, setup](int code) {
+        install->deleteLater();
+
+        if (code == 0) {
+            QMessageBox::information(
+                this, "Realtime priority",
+                QString("%1\n\nLog out of your desktop session and log in again, or restart the "
+                        "computer. The new limits only apply to sessions started after this; audio "
+                        "applications then use them on their own.")
+                    .arg(setup.done));
+        } else {
+            QMessageBox::warning(this, "Realtime priority", "The limits could not be set up.");
+        }
+
+        updateDiagnostics();
+    });
+
+    connect(install, &QProcess::errorOccurred, this, [this, install] {
+        install->deleteLater();
+        QMessageBox::warning(this, "Realtime priority", "pkexec is needed to set up the limits.");
+    });
+
+    install->start("pkexec", setup.command);
+}
+
 void Panel::testFinished(const QList<ProfileResult> &results)
 {
     m_latTest.stop();
@@ -776,6 +848,10 @@ void Panel::testFinished(const QList<ProfileResult> &results)
     }
 
     text += QString::fromUtf8("Worst scheduling latency during the test: %1 µs.\n").arg(m_latTest.maxUs());
+    const int realtime = rtprioLimit();
+    text += realtime > 0
+              ? QString("Realtime priority limit of this session: %1.\n").arg(realtime)
+              : QString("Realtime scheduling is not available to this session (rtprio limit 0).\n");
 
     // Take over the suggestion, of the best API if several were compared.
     if (const ProfileResult *best = bestOf(results)) {

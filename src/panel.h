@@ -52,6 +52,9 @@ public:
     ~Panel() override;
     void saveScreenshots(const QString &dir);
 
+    // Startup check: offers to set up realtime priority if the session has none.
+    void checkRealtimePriority();
+
 private:
     void buildAudioPage();
     void buildChannelPage();
@@ -78,7 +81,7 @@ private:
 
     // System Performance Test
     void startTest(const QList<AudioApi> &apis); // stops a running test instead
-
+    void offerRealtimeSetup(); // asks, then grants realtime priority through pkexec
     void testFinished(const QList<ProfileResult> &results);
     void saveAudioChoice() const;
 
@@ -116,6 +119,8 @@ private:
     ui::ValueBox *m_latMax = nullptr;
     ui::ValueBox *m_driverBox = nullptr;
     ui::ValueBox *m_firmwareBox = nullptr;
+    ui::ValueBox *m_realtimeBox = nullptr; // the session's limit ...
+    ui::Button *m_realtimeSetup = nullptr; // ... or the button to set one up
     ui::Button *m_latStart = nullptr;
     ui::Button *m_testBuffers = nullptr;
     ui::Button *m_testApis = nullptr;

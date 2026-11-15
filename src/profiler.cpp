@@ -1,5 +1,7 @@
 #include "profiler.h"
 
+#include "backend.h"
+
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -9,6 +11,8 @@
 #include <QStandardPaths>
 
 #include <alsa/asoundlib.h>
+#include <pthread.h>
+#include <sched.h>
 
 #include <algorithm>
 #include <chrono>
@@ -619,6 +623,12 @@ ProfileResult Profiler::runOne(AudioApi api, int card, int rate, bool demo)
 
 void Profiler::runAlsa(int card, ProfileResult &result)
 {
+    // Write with realtime priority if the session allows it, as audio
+    // applications do; otherwise the test shows what they would get without.
+    const int limit = rtprioLimit();
+    const sched_param realtime{.sched_priority = std::min(limit, 70)};
+    const bool boosted = limit > 0 && pthread_setschedparam(pthread_self(), SCHED_FIFO, &realtime) == 0;
+
     for (const int frames : kProfileSizes) {
         if (m_stop) {
             break;
@@ -641,6 +651,11 @@ void Profiler::runAlsa(int card, ProfileResult &result)
             result.steps.clear();
             break;
         }
+    }
+
+    if (boosted) {
+        const sched_param normal{};
+        pthread_setschedparam(pthread_self(), SCHED_OTHER, &normal);
     }
 }
 
