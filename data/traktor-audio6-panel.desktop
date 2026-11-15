@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Traktor Audio 6 Control Panel
+Comment=Port and audio settings for the Native Instruments Traktor Audio 6
+Exec=traktor-audio6-panel
+Icon=audio-card
+Categories=AudioVideo;Audio;Settings;HardwareSettings;
+Keywords=Traktor;Audio 6;Native Instruments;Phono;Direct Thru;
